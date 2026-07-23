@@ -1,0 +1,33 @@
+// ============================================================
+// ZKAuction — Private Reserve Auction Smart Contract
+// Language: Compact (Midnight Network's ZK smart contract DSL)
+//
+// ⚠️ PLACEHOLDER — Phase 0 scaffolding only.
+//    Real contract logic written in Phase 1.
+//
+// PRIVACY MODEL (what this contract will enforce):
+// ─────────────────────────────────────────────────
+// ✅ HIDDEN from observers:
+//    • The reserve price (stored as a cryptographic commitment)
+//    • Individual bidder identities (DApp-specific ephemeral keys)
+//
+// 👁️ VISIBLE on-chain:
+//    • A reserve_commitment (the hash — not the price)
+//    • The highest bid amount (public, so bidders know what to beat)
+//    • Auction status (open / settled / expired)
+//    • The winning bid amount (revealed only at settlement)
+//
+// KEY CONCEPTS for first-timers:
+// ─────────────────────────────
+// ledger { }   → public, persistent on-chain state (visible to all)
+// circuit { }  → ZK-provable function (inputs are proven, not exposed)
+// witness      → private input to a circuit (never leaves your device)
+// disclose()   → explicitly moves data from private → public state
+// ============================================================
+
+// TODO: Phase 1 will replace this placeholder with:
+//   ledger { ... }
+//   circuit createAuction(...): [] { ... }
+//   circuit placeBid(...): [] { ... }
+//   circuit settle(...): [] { ... }
+//   circuit withdrawExpired(): [] { ... }
