@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — NEVER commit real secrets
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +40,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# ─── Midnight-specific ────────────────────────────────────────────
+# Compact compiler output (auto-generated, do not commit)
+contract/src/generated/index.cjs
+contract/src/generated/index.d.ts
+contract/src/generated/*.zkir
+contract/src/generated/*.mjs
+
+# Private state database (local only, contains private keys)
+midnight-private-state.db
+*.leveldb/
+
+# Docker volume data
+.docker-data/
