@@ -1,0 +1,89 @@
+# =============================================================================
+# Midnight Local Development Stack
+# =============================================================================
+# This runs 4 services you need for local development:
+#
+#  1. midnight-node     — the local blockchain node (produces blocks)
+#  2. pg               — PostgreSQL (indexer database)
+#  3. midnight-indexer — watches the node, indexes contract events
+#  4. proof-server     — generates ZK proofs locally (the privacy engine)
+#
+# Run with:  docker compose up -d
+# Stop with: docker compose down
+# Logs:      docker compose logs -f proof-server
+#
+# NOTE: For Preprod (remote testnet), you only need the proof-server service.
+#       Set MIDNIGHT_NETWORK=TestNet in your .env to use Preprod endpoints.
+# =============================================================================
+
+services:
+  # ─── Local Blockchain Node ──────────────────────────────────────────────────
+  midnight-node:
+    image: ghcr.io/midnight-ntwrk/midnight-node:latest
+    pull_policy: always
+    ports:
+      - "9944:9944"   # WebSocket RPC
+      - "9933:9933"   # HTTP RPC
+    environment:
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9933/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - node-data:/data
+
+  # ─── PostgreSQL for Indexer ──────────────────────────────────────────────────
+  pg:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: midnight_indexer
+      POSTGRES_USER: indexer
+      POSTGRES_PASSWORD: indexer_password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U indexer -d midnight_indexer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+  # ─── Midnight Indexer ───────────────────────────────────────────────────────
+  midnight-indexer:
+    image: ghcr.io/midnight-ntwrk/midnight-indexer:latest
+    pull_policy: always
+    depends_on:
+      midnight-node:
+        condition: service_healthy
+      pg:
+        condition: service_healthy
+    ports:
+      - "8088:8088"   # GraphQL API (queried by the Midnight SDK)
+    environment:
+      - INDEXER_DB_URL=postgresql://indexer:indexer_password@pg:5432/midnight_indexer
+      - INDEXER_NODE_WS=ws://midnight-node:9944
+      - RUST_LOG=info
+
+  # ─── Proof Server (The Privacy Engine) ──────────────────────────────────────
+  # This is the most important service. It runs on YOUR machine and generates
+  # zero-knowledge proofs. Sensitive private data (reserve price, bid amounts)
+  # are processed here and NEVER sent to the blockchain.
+  proof-server:
+    image: ghcr.io/midnight-ntwrk/proof-server:latest
+    pull_policy: always
+    ports:
+      - "6300:6300"
+    environment:
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6300/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+volumes:
+  node-data:
+  pg-data:
