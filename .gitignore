@@ -54,3 +54,9 @@ midnight-private-state.db
 
 # Docker volume data
 .docker-data/
+
+# Seller private config (reserve price + salt — NEVER commit!)
+.seller-config.json
+
+# Deployment artifacts
+scripts/deploy-output.json
