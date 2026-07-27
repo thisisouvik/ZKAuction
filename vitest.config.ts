@@ -30,6 +30,6 @@ export default defineConfig({
     },
 
     // Reporter: verbose shows each test name (good for CI logs)
-    reporter: 'verbose',
+    reporters: ['verbose'],
   },
 });
