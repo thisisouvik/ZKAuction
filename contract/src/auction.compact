@@ -43,7 +43,7 @@
 // Bidder identities cannot be linked across contracts.
 // ============================================================
 
-pragma language_version >= 0.20;
+pragma language_version >= 0.16;
 
 import CompactStandardLibrary;
 
@@ -67,13 +67,13 @@ export ledger seller: Bytes<32>;
 export ledger reserve_commitment: Bytes<32>;
 
 // Current highest bid amount — public so bidders know what to beat
-export ledger highest_bid: Uint64;
+export ledger highest_bid: Uint<64>;
 
 // ZK-derived identity of the highest bidder (not wallet address)
 export ledger highest_bidder: Bytes<32>;
 
 // Block number after which bidding is closed
-export ledger auction_end_block: Uint64;
+export ledger auction_end_block: Uint<64>;
 
 // Auction lifecycle phase
 export ledger status: AuctionStatus;
@@ -97,7 +97,7 @@ witness local_secret_key(): Bytes<32>;
 
 // Seller provides the reserve price privately during createAuction() and settle()
 // This is a ZK witness — it flows into the circuit but never onto the chain
-witness reserve_price(): Uint64;
+witness reserve_price(): Uint<64>;
 
 // The salt used when creating the commitment — prevents rainbow-table attacks
 // commit = persistentHash(reserve_price || salt)
@@ -137,7 +137,7 @@ constructor() {
 //
 // What the proof reveals: Nothing about the reserve price.
 export circuit createAuction(
-  duration_blocks: Uint64,        // How many blocks the auction runs (public input)
+  duration_blocks: Uint<64>,        // How many blocks the auction runs (public input)
   item_hash_input: Bytes<32>      // Hash of the item description (public input)
 ): [] {
   // ── Access control: only seller can create the auction
@@ -176,7 +176,7 @@ export circuit createAuction(
 //  ✅ Bidder identity is a valid derived key
 //
 // What the proof reveals: bid_amount, bidder's ZK key (not wallet address)
-export circuit placeBid(bid_amount: Uint64): [] {
+export circuit placeBid(bid_amount: Uint<64>): [] {
   // ── Auction must be open
   assert(status == AuctionStatus.OPEN, "Auction is not open");
 
@@ -227,14 +227,18 @@ export circuit settle(): [] {
   assert(recomputed == reserve_commitment, "Invalid reserve commitment: wrong price or salt");
 
   // ── Determine outcome based on whether reserve was met
-  // The reserve_price() witness is used here — but it's private!
-  // The proof proves highest_bid >= reserve_price without revealing reserve_price.
-  if (highest_bid >= reserve_price()) {
+  // We intentionally DISCLOSE the boolean result of (highest_bid >= reserve_price).
+  // This reveals YES/NO but never the actual reserve price value.
+  // The disclose() wraps the comparison — making 'met' a public on-chain fact.
+  // The compiler requires this: the branch condition must itself be explicitly disclosed
+  // before we can write to the public ledger inside its branches.
+  const met: Boolean = disclose(highest_bid >= reserve_price());
+  if (met) {
     // ✅ Reserve met — auction succeeds, winner is highest_bidder
-    status = AuctionStatus.SETTLED;
+    status = disclose(AuctionStatus.SETTLED);
   } else {
     // ❌ Reserve not met — auction expires, no winner
-    status = AuctionStatus.EXPIRED;
+    status = disclose(AuctionStatus.EXPIRED);
   }
 }
 
