@@ -40,11 +40,14 @@
  */
 
 import {
-  deployContract,
-  findDeployedContract,
+  createUnprovenDeployTx,
+  submitTxAsync,
+  submitCallTxAsync,
   getPublicStates,
   type ContractProviders,
 } from '@midnight-ntwrk/midnight-js-contracts';
+import { sampleSigningKey } from '@midnight-ntwrk/compact-runtime';
+import { CompiledContract } from '@midnight-ntwrk/compact-js/effect';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import {
   AuctionStatus,
@@ -105,10 +108,8 @@ export class AuctionAPI {
    */
   static async connect(walletConnector: MidnightWalletConnector): Promise<AuctionAPI> {
     // Set the global network ID — this MUST exactly match what the 1AM wallet expects.
-    // 'preprod' = Midnight Preprod testnet. 'devnet' = local docker stack.
-    // Do NOT use 'TestNet' — that is only our internal env-var label.
-    const networkEnv = process.env.NEXT_PUBLIC_MIDNIGHT_NETWORK ?? 'TestNet';
-    const networkId = networkEnv === 'DevNet' ? 'devnet' : 'preprod';
+    // The env var NEXT_PUBLIC_MIDNIGHT_NETWORK should be 'preview', 'preprod', or 'devnet'.
+    const networkId = (process.env.NEXT_PUBLIC_MIDNIGHT_NETWORK ?? 'preview').toLowerCase();
     setNetworkId(networkId);
     console.log('[ZKAuction] Set network ID to:', networkId);
 
@@ -150,55 +151,89 @@ export class AuctionAPI {
   async deploy(params: CreateAuctionParams): Promise<string> {
     this.ensureProviders();
 
-    // Generate a fresh random salt for the commitment
-    const salt = randomBytes(32);
-
-    // Store private seller state BEFORE deploying
-    // This ensures the seller can settle even if the page refreshes
+    const salt = new Uint8Array(32);
+    if (typeof window !== 'undefined' && window.crypto) {
+      window.crypto.getRandomValues(salt);
+    } else {
+      // Fallback for node environments if needed
+      salt.set(randomBytes(32));
+    }
+    
     const privateState: AuctionPrivateState = {
-      local_secret_key:  this.witnesses.local_secret_key(),
-      reserve_price:     params.reserve_price,
-      commitment_salt:   salt,
+      local_secret_key: this.witnesses.local_secret_key(),
+      reserve_price:    params.reserve_price,
+      commitment_salt:  salt,
     };
-
-    // Extend witnesses with seller-specific private values
-    const sellerWitnesses = {
-      ...this.witnesses,
-      reserve_price:    () => params.reserve_price,
-      commitment_salt:  () => salt,
-    };
-
-    // Hash the item description for on-chain storage
     const itemHash = hashItemDescription(params.item_description);
 
     try {
-      // ─ Deploy the contract (creates the UTXO on Midnight) ─────────────────
-      // compiledContract comes from the compactc output (generated/index.cjs)
-      // Until compactc runs, this uses a placeholder. Replace with:
-      //   import { Contract } from '../contract/src/generated';
-      //   const compiledContract = Contract;
-      const compiledContract = await loadCompiledContract();
-
+      const compiledContract = await buildCompiledContract(privateState);
       await this.providers.privateStateProvider.set(PRIVATE_STATE_ID, privateState);
 
-      const deployed = await deployContract(
-        this.providers as any,
+      // ── Step 1: Create the unproven deploy transaction ──────────────────
+      // MUST use createUnprovenDeployTx + submitTxAsync instead of deployContract()
+      // because deployContract() hangs indefinitely on the Preview network.
+      const deployTxData = await (createUnprovenDeployTx as any)(
         {
-          compiledContract: compiledContract as any,
-          privateStateId: PRIVATE_STATE_ID,
+          zkConfigProvider: this.providers.zkConfigProvider,
+          walletProvider:   this.providers.walletProvider,
+        },
+        {
+          compiledContract,
+          privateStateId:      PRIVATE_STATE_ID,
           initialPrivateState: privateState,
-        } as any
-      ) as any;
-
-      const contractAddress = deployed.deployTxData.public.contractAddress;
-
-      // ─ Call createAuction() circuit ───────────────────────────────────────
-      // This sets the reserve_commitment, duration, item_hash on-chain.
-      // The reserve_price never leaves the proof server.
-      await deployed.callTx.createAuction(
-        params.duration_blocks,
-        new Uint8Array(itemHash)
+          signingKey:          sampleSigningKey(),
+        }
       );
+
+      const contractAddress: string = deployTxData.public.contractAddress;
+
+      // ── Step 1.5: Scope Private State ──────────────────────────────────────
+      // Now that the contract address is generated, we must scope the private
+      // state provider to this specific contract and re-save it, so subsequent
+      // circuit calls (and page reloads) can find it.
+      if (this.providers.privateStateProvider && (this.providers.privateStateProvider as any).setContractAddress) {
+        (this.providers.privateStateProvider as any).setContractAddress(contractAddress);
+      }
+      await this.providers.privateStateProvider.set(PRIVATE_STATE_ID, privateState);
+
+      // ── Step 2: Submit the deploy transaction ────────────────────────────
+      await (submitTxAsync as any)(this.providers, {
+        unprovenTx: deployTxData.private.unprovenTx,
+      });
+
+      // ── Wait for Indexer ──────────────────────────────────────────────────
+      // Before we can call a circuit on the deployed contract, we MUST wait
+      // for the indexer to see the new state. Otherwise submitCallTxAsync fails
+      // or causes a "Duplicate request" wallet error.
+      let indexed = false;
+      for (let i = 0; i < 30; i++) {
+        try {
+          await this.getState(contractAddress);
+          indexed = true;
+          break;
+        } catch (e) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // wait 2s
+        }
+      }
+      if (!indexed) {
+        throw new Error("Contract deployed, but took too long to index. Please refresh and try again later.");
+      }
+
+      // ── Give Wallet Extension time to reset ────────────────────────────────
+      // Even if the indexer sees the contract, the 1AM wallet might still be
+      // cleaning up its internal state from the previous submitTransaction popup.
+      // If we hit it too fast, it throws "Duplicate request".
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // ── Step 3: Call the createAuction circuit ───────────────────────────
+      await (submitCallTxAsync as any)(this.providers, {
+        compiledContract,
+        contractAddress,
+        circuitId:    'createAuction',
+        args:         [params.duration_blocks, new Uint8Array(itemHash)],
+        privateStateId: PRIVATE_STATE_ID,
+      });
 
       return contractAddress;
     } catch (error) {
@@ -209,6 +244,7 @@ export class AuctionAPI {
       );
     }
   }
+
 
   // ── placeBid: Submit a bid ─────────────────────────────────────────────────
   /**
@@ -228,25 +264,22 @@ export class AuctionAPI {
     this.ensureProviders();
 
     try {
-      const compiledContract = await loadCompiledContract();
-      const found = await findDeployedContract(
-        this.providers as any,
-        {
-          compiledContract: compiledContract as any,
-          contractAddress: params.contract_address,
-          privateStateId:  PRIVATE_STATE_ID,
-        } as any
-      ) as any;
+      if (this.providers.privateStateProvider && (this.providers.privateStateProvider as any).setContractAddress) {
+        (this.providers.privateStateProvider as any).setContractAddress(params.contract_address);
+      }
+      const storedState = await this.providers.privateStateProvider.get(PRIVATE_STATE_ID);
+      const compiledContract = await buildCompiledContract(storedState);
 
-      const txData = await found.callTx.placeBid(params.amount) as any;
+      await (submitCallTxAsync as any)(this.providers, {
+        compiledContract,
+        contractAddress: params.contract_address,
+        circuitId:       'placeBid',
+        args:            [params.amount],
+        privateStateId:  PRIVATE_STATE_ID,
+      });
+
       const newState = await this.getState(params.contract_address);
-
-      return {
-        txHash:      txData.txHash ?? '',
-        blockHeight: txData.blockHeight ?? 0,
-        timestamp:   Date.now(),
-        newState,
-      };
+      return { txHash: '', blockHeight: 0, timestamp: Date.now(), newState };
     } catch (error) {
       throw new AuctionApiError(
         AuctionErrorCode.CIRCUIT_CALL_FAILED,
@@ -272,36 +305,30 @@ export class AuctionAPI {
   async settle(contractAddress: string): Promise<TxResult> {
     this.ensureProviders();
 
-    // Load the seller's private state from local storage
+    if (this.providers.privateStateProvider && (this.providers.privateStateProvider as any).setContractAddress) {
+      (this.providers.privateStateProvider as any).setContractAddress(contractAddress);
+    }
     const privateState = await this.providers.privateStateProvider.get(PRIVATE_STATE_ID);
     if (!privateState?.reserve_price || !privateState?.commitment_salt) {
       throw new AuctionApiError(
         AuctionErrorCode.INVALID_STATE,
-        'Cannot settle: seller private state (reserve price + salt) not found locally. ' +
-        'Did you create this auction on a different device or browser?'
+        'Cannot settle: seller private state (reserve price + salt) not found locally.'
       );
     }
 
     try {
-      const compiledContract = await loadCompiledContract();
-      const found = await findDeployedContract(
-        this.providers as any,
-        {
-          compiledContract: compiledContract as any,
-          contractAddress,
-          privateStateId: PRIVATE_STATE_ID,
-        } as any
-      ) as any;
+      const compiledContract = await buildCompiledContract(privateState);
 
-      const txData = await found.callTx.settle() as any;
+      await (submitCallTxAsync as any)(this.providers, {
+        compiledContract,
+        contractAddress,
+        circuitId:      'settle',
+        args:           [],
+        privateStateId: PRIVATE_STATE_ID,
+      });
+
       const newState = await this.getState(contractAddress);
-
-      return {
-        txHash:      txData.txHash ?? '',
-        blockHeight: txData.blockHeight ?? 0,
-        timestamp:   Date.now(),
-        newState,
-      };
+      return { txHash: '', blockHeight: 0, timestamp: Date.now(), newState };
     } catch (error) {
       throw new AuctionApiError(
         AuctionErrorCode.CIRCUIT_CALL_FAILED,
@@ -327,25 +354,22 @@ export class AuctionAPI {
     this.ensureProviders();
 
     try {
-      const compiledContract = await loadCompiledContract();
-      const found = await findDeployedContract(
-        this.providers as any,
-        {
-          compiledContract: compiledContract as any,
-          contractAddress,
-          privateStateId: PRIVATE_STATE_ID,
-        } as any
-      ) as any;
+      if (this.providers.privateStateProvider && (this.providers.privateStateProvider as any).setContractAddress) {
+        (this.providers.privateStateProvider as any).setContractAddress(contractAddress);
+      }
+      const storedState = await this.providers.privateStateProvider.get(PRIVATE_STATE_ID);
+      const compiledContract = await buildCompiledContract(storedState);
 
-      const txData = await found.callTx.withdrawExpired() as any;
+      await (submitCallTxAsync as any)(this.providers, {
+        compiledContract,
+        contractAddress,
+        circuitId:      'withdrawExpired',
+        args:           [],
+        privateStateId: PRIVATE_STATE_ID,
+      });
+
       const newState = await this.getState(contractAddress);
-
-      return {
-        txHash:      txData.txHash ?? '',
-        blockHeight: txData.blockHeight ?? 0,
-        timestamp:   Date.now(),
-        newState,
-      };
+      return { txHash: '', blockHeight: 0, timestamp: Date.now(), newState };
     } catch (error) {
       throw new AuctionApiError(
         AuctionErrorCode.CIRCUIT_CALL_FAILED,
@@ -375,7 +399,7 @@ export class AuctionAPI {
         contractAddress
       ) as any;
 
-      if (!states || states.length === 0) {
+      if (!states || !states.contractState || !states.contractState.data) {
         throw new AuctionApiError(
           AuctionErrorCode.CONTRACT_NOT_FOUND,
           `No state found for contract ${contractAddress}. Is it deployed to this network?`
@@ -383,7 +407,7 @@ export class AuctionAPI {
       }
 
       // Decode the raw ledger state into our TypeScript AuctionState type
-      return decodeAuctionState(states[states.length - 1]);
+      return decodeAuctionState(states.contractState.data);
     } catch (error) {
       if (error instanceof AuctionApiError) throw error;
       throw new AuctionApiError(
@@ -475,105 +499,129 @@ function toHex(bytes: Uint8Array | string): string {
 }
 
 /**
- * Loads the compiled Compact contract.
+ * Loads the compiled Compact contract module and returns its named exports.
  *
- * After `npm run compile:contract` generates the contract output, replace this
- * with a direct import:
+ * The generated module exports:
+ *   - `Contract` (class)  — must be instantiated with `new Contract(witnesses)`
+ *   - `ledger` (function) — decodes raw state values
+ *   - `AuctionStatus` (enum)
  *
- *   import { Contract } from '../contract/src/generated';
- *   export function loadCompiledContract() { return Contract; }
- *
- * Until then, this throws a helpful error explaining what to do.
+ * IMPORTANT: Do NOT pass the Contract class directly to deployContract.
+ *            Always instantiate it first: `new Contract(witnesses)`.
  */
-async function loadCompiledContract(): Promise<unknown> {
+async function loadCompiledContractModule(): Promise<any> {
   try {
-    // @ts-ignore - this file is generated during the build step by compact compile
-    const generated = await import('../contract/src/generated/contract/index.js');
-    return generated.default ?? generated;
-  } catch {
-    throw new AuctionApiError(
-      AuctionErrorCode.PROVIDERS_NOT_READY,
-      'Compiled contract not found at contract/src/generated/contract/index.js.\n' +
-      'Run: npm run compile:contract\n' +
-      'This requires the Midnight compact compiler to be installed.'
-    );
+    // @ts-ignore — generated by compactc during `npm run compile:contract`
+    const mod = await import('../contract/src/generated/contract/index.js');
+    // The module may export as ESM named exports or as a default object
+    if (mod && mod.Contract) return mod;
+    if (mod?.default?.Contract) return mod.default;
+    throw new Error('Contract class not found in generated module');
+  } catch (e: any) {
+    if (e?.code === 'MODULE_NOT_FOUND' || e?.message?.includes('Cannot find module') || e?.message?.includes('not found')) {
+      throw new AuctionApiError(
+        AuctionErrorCode.PROVIDERS_NOT_READY,
+        'Compiled contract not found at contract/src/generated/contract/index.js.\n' +
+        'Run: npm run compile:contract\n' +
+        'This requires the Midnight compact compiler to be installed.'
+      );
+    }
+    throw e;
   }
 }
 
 /**
  * Resolves the wallet address from a connector.
- * The 1AM wallet may expose address as:
- *   - An async function: conn.address() → Promise<string>
- *   - A sync function:   conn.address() → string
- *   - A plain string:    conn.address   → string
- *   - Via .state():      conn.state() → { address: string }
+ * Supports ALL Midnight address formats:
+ *   - Old testnet: tds1... (shielded), tdu1... (unshielded)
+ *   - New preview/preprod/mainnet: mn_shield-addr_preview..., mn_addr_...
+ *   - Via async functions or plain string properties
  */
 async function resolveAddress(connector: any): Promise<string> {
   try {
     if (typeof connector.address === 'function') {
       const result = await connector.address();
-      if (typeof result === 'string') return result;
+      if (typeof result === 'string' && result) return result;
     }
     if (typeof connector.address === 'string' && connector.address) {
       return connector.address;
     }
-    // Helper to extract a string address from any generic result shape
-    const extractString = (res: any): string | null => {
+
+    /**
+     * Returns true if the string looks like any valid Midnight address.
+     * Supports:  tds1…  tdu1…  mn_shield-addr_…  mn_…
+     */
+    const isMidnightAddress = (s: string): boolean =>
+      s.startsWith('tds1') ||
+      s.startsWith('tdu1') ||
+      s.startsWith('mn_shield-addr_') ||
+      s.startsWith('mn_addr_') ||
+      s.startsWith('mn1');        // fallback for any mn-prefixed bech32
+
+    /**
+     * Extracts a Midnight address string from any arbitrary value:
+     * string | string[] | { shieldedAddress, unshieldedAddress, ... } | nested object
+     */
+    const extractAddress = (res: any): string | null => {
       if (!res) return null;
+
+      // Plain string
       if (typeof res === 'string') {
-        if (res.startsWith('tds1') || res.startsWith('tdu1')) return res;
+        return res.length > 10 ? res : null; // accept any non-trivial string
       }
-      
-      // Recursive search for a valid Midnight address string
-      const findAddress = (obj: any, depth = 0): string | null => {
-        if (depth > 5 || !obj) return null;
-        if (typeof obj === 'string' && (obj.startsWith('tds1') || obj.startsWith('tdu1'))) return obj;
-        if (typeof obj === 'object') {
-          for (const key of Object.keys(obj)) {
-            const found = findAddress(obj[key], depth + 1);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
 
-      const found = findAddress(res);
-      if (found) return found;
+      // Direct object properties — checked in priority order
+      if (typeof res === 'object') {
+        // The 1AM wallet on preview/preprod returns { shieldedAddress, shieldedCoinPublicKey, ... }
+        if (typeof res.shieldedAddress === 'string' && res.shieldedAddress) return res.shieldedAddress;
+        if (typeof res.unshieldedAddress === 'string' && res.unshieldedAddress) return res.unshieldedAddress;
+        if (typeof res.address === 'string' && res.address) return res.address;
+        if (typeof res.coinPublicKey === 'string' && res.coinPublicKey) return res.coinPublicKey;
+      }
 
-      // Fallbacks
-      if (typeof res === 'string') return res;
+      // Array — take first valid element
       if (Array.isArray(res) && res.length > 0) {
-        if (typeof res[0] === 'string') return res[0];
+        const first = res[0];
+        if (typeof first === 'string') return first;
+        return extractAddress(first);
       }
+
+      // Deep recursive scan as last resort
+      if (typeof res === 'object') {
+        for (const key of Object.keys(res)) {
+          const val = res[key];
+          if (typeof val === 'string' && isMidnightAddress(val)) return val;
+        }
+        for (const key of Object.keys(res)) {
+          const found = extractAddress(res[key]);
+          if (found) return found;
+        }
+      }
+
       return null;
     };
 
-    if (typeof connector.getAddress === 'function') {
-      const result = extractString(await connector.getAddress());
-      if (result) return result;
-    }
     if (typeof connector.getShieldedAddresses === 'function') {
-      try {
-        const rawRes = await connector.getShieldedAddresses();
-        const strRes = extractString(rawRes);
-        if (strRes) return strRes;
-        
-        // If it failed to extract, throw an error to surface it to the user
-        throw new Error(`getShieldedAddresses returned: ${JSON.stringify(rawRes, (k, v) => typeof v === 'bigint' ? v.toString() : v)}`);
-      } catch (e: any) {
-        throw new Error(`Wallet API Error: ${e.message}`);
-      }
+      const rawRes = await connector.getShieldedAddresses();
+      console.log('[ZKAuction] getShieldedAddresses raw:', JSON.stringify(rawRes, (k, v) => typeof v === 'bigint' ? v.toString() : v));
+      const addr = extractAddress(rawRes);
+      if (addr) return addr;
+    }
+    if (typeof connector.getAddress === 'function') {
+      const addr = extractAddress(await connector.getAddress());
+      if (addr) return addr;
     }
     if (typeof connector.getUnshieldedAddress === 'function') {
-      const result = extractString(await connector.getUnshieldedAddress());
-      if (result) return result;
+      const addr = extractAddress(await connector.getUnshieldedAddress());
+      if (addr) return addr;
     }
     if (typeof connector.state === 'function') {
       const state = await connector.state();
       if (state?.address) return state.address;
       if (state?.coinPublicKey) return state.coinPublicKey;
     }
-    // Last resort — log and return placeholder
+
+    // Last resort — return 'unknown' and let extractKeysFromConnectorOrAddress handle it
     console.warn('[ZKAuction] Could not resolve wallet address. Connector:', connector);
     return 'unknown';
   } catch (e) {
@@ -582,3 +630,62 @@ async function resolveAddress(connector: any): Promise<string> {
   }
 }
 
+/**
+ * Builds a fully configured `CompiledContract` ready to pass to `deployContract` / `findDeployedContract`.
+ *
+ * The SDK requires:
+ *   1. CompiledContract.make(tag, ContractClass)   — registers the class (stored as .ctor internally)
+ *   2. .withWitnesses(witnesses)                   — attaches the witness functions
+ *   3. .withCompiledFileAssets(keysDir)            — points to the .prover / .verifier key files
+ *
+ * The witness functions follow the Compact calling convention:
+ *   (ctx: WitnessContext<Ledger, PrivateState>) => [updatedPrivateState, witnessValue]
+ *
+ * @param privateState — the current private state (can be null for bidder reads)
+ */
+async function buildCompiledContract(privateState: any): Promise<any> {
+  // Load the generated Contract class (compactc output)
+  let ContractClass: any;
+  try {
+    // @ts-ignore — generated by compactc
+    const mod = await import('../contract/src/generated/contract/index.js');
+    ContractClass = mod.Contract ?? mod.default?.Contract;
+    if (!ContractClass) throw new Error('Contract class not found in generated module');
+  } catch (e: any) {
+    const isNotFound = e?.message?.includes('Cannot find module') || e?.message?.includes('not found') || e?.code === 'MODULE_NOT_FOUND';
+    if (isNotFound || e instanceof AuctionApiError) {
+      throw new AuctionApiError(
+        AuctionErrorCode.PROVIDERS_NOT_READY,
+        'Compiled contract not found.\nRun: npm run compile:contract\n(Requires the Midnight compact compiler.)'
+      );
+    }
+    throw e;
+  }
+
+  /**
+   * Witness functions — read from the current private state each time they are called.
+   * The Compact runtime passes `ctx` which carries `ctx.privateState`.
+   * We return [unchanged_private_state, witness_value].
+   */
+  const witnesses = {
+    local_secret_key: (ctx: any) => [ctx.privateState, ctx.privateState?.local_secret_key ?? new Uint8Array(32)],
+    reserve_price:    (ctx: any) => [ctx.privateState, ctx.privateState?.reserve_price    ?? 0n],
+    commitment_salt:  (ctx: any) => [ctx.privateState, ctx.privateState?.commitment_salt  ?? new Uint8Array(32)],
+  };
+
+  // In the browser, withCompiledFileAssets uses fetch() to load key files.
+  // We serve the compiled keys from public/keys/ so they are accessible at /keys/*.
+  // Next.js automatically serves everything in /public as static assets.
+  //
+  // SDK will fetch: /keys/createAuction.verifier, /keys/placeBid.prover, etc.
+  const keysBaseUrl = '/keys';
+
+  // Build using the CompiledContract pipeline (imperative style to avoid TS generic issues)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const step1: any = CompiledContract.make('zkauction-v1', ContractClass);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const step2: any = (CompiledContract.withWitnesses as any)(step1, witnesses);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const step3: any = (CompiledContract.withCompiledFileAssets as any)(step2, keysBaseUrl);
+  return step3;
+}

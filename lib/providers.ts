@@ -168,85 +168,100 @@ async function waitForWalletInjection(
 /**
  * Builds the complete Midnight provider stack for the auction contract.
  *
- * This is the most important function in the API layer — it wires together
- * all six providers. The result is passed to deployContract() or findDeployedContract().
- *
  * IMPORTANT: This runs in the BROWSER (Next.js client component only).
- * Midnight SDK providers use browser APIs (WebSocket, IndexedDB, fetch).
- * Never call this from a Next.js server component or API route.
  *
- * @param config - Network endpoints + wallet connector
- * @returns Promise<AuctionProviders> — the wired provider stack
- *
- * @example
- * ```ts
- * const connector = await connectWallet();
- * const providers = await buildProviders({
- *   network: PREPROD_CONFIG,
- *   walletConnector: connector,
- * });
- * const deployed = await deployContract(providers, { ... });
- * ```
+ * Uses the correct 1AM wallet API:
+ *  - api.getProvingProvider(zkConfigProvider) → proof provider
+ *  - api.balanceUnsealedTransaction(hexTx)    → balance transactions
+ *  - api.submitTransaction(hexTx)             → submit transactions
+ *  - api.getShieldedAddresses()               → coin/encryption public keys (used as-is)
  */
 export async function buildProviders(
   config: BuildProvidersConfig
 ): Promise<AuctionProviders> {
-  const { network, walletConnector, walletAddress } = config;
+  const { network, walletConnector } = config;
 
-  // Dynamic imports — these packages use browser APIs and must be
-  // imported at runtime (not at module load time) for Next.js compatibility.
+  // Dynamic imports — browser APIs only
   const { indexerPublicDataProvider } = (await import(
     '@midnight-ntwrk/midnight-js-indexer-public-data-provider'
-  )) as any;
-  const { httpClientProofProvider } = (await import(
-    '@midnight-ntwrk/midnight-js-http-client-proof-provider'
   )) as any;
   const { FetchZkConfigProvider } = (await import(
     '@midnight-ntwrk/midnight-js-fetch-zk-config-provider'
   )) as any;
 
+  // ── Get shielded keys from wallet ────────────────────────────────────────
+  // The wallet returns { shieldedCoinPublicKey, shieldedEncryptionPublicKey }
+  // These are passed directly to the SDK — no decoding needed.
+  const shieldedAddress = await walletConnector.getShieldedAddresses();
+  console.log('[ZKAuction] shieldedAddress:', JSON.stringify(shieldedAddress));
+
+  // ── Provider 5: zkConfigProvider ─────────────────────────────────────────
+  // FetchZkConfigProvider fetches ZK key files via simple HTTP:
+  //   {baseURL}/keys/{circuitId}.verifier  — verifier keys
+  //   {baseURL}/keys/{circuitId}.prover    — prover keys
+  //   {baseURL}/zkir/{circuitId}.bzkir     — ZK IR
+  //
+  // NOT the indexer GraphQL endpoint.
+  const zkKeysBaseUrl = typeof window !== 'undefined'
+    ? window.location.origin          // browser: http://localhost:3000
+    : 'http://localhost:3000';        // SSR fallback (should not reach here)
+
+  const zkConfigProvider = new FetchZkConfigProvider(
+    zkKeysBaseUrl,
+    fetch.bind(window)
+  );
+
+  // ── Provider 4: proofProvider ─────────────────────────────────────────────
+  // Get the proving provider FROM the wallet API — it uses the network's proof
+  // server internally. DO NOT use httpClientProofProvider.
+  const provingProvider = await walletConnector.getProvingProvider(zkConfigProvider);
+  const proofProvider = {
+    async proveTx(unprovenTx: any): Promise<any> {
+      const { CostModel } = await import('@midnight-ntwrk/ledger-v8');
+      return unprovenTx.prove(provingProvider, CostModel.initialCostModel());
+    },
+  } as any;
+
   // ── Provider 1: walletProvider ───────────────────────────────────────────
-  // Wraps the 1AM wallet connector into the Midnight WalletProvider interface.
-  // Handles transaction balancing (adding fee UTXOs) and signing.
-  const walletProvider = await buildWalletProvider(walletConnector, walletAddress || '');
+  const walletProvider = {
+    getCoinPublicKey: () => shieldedAddress.shieldedCoinPublicKey,
+    getEncryptionPublicKey: () => shieldedAddress.shieldedEncryptionPublicKey,
+    // balanceTx: serialize tx → hex, call wallet, deserialize result
+    balanceTx: async (tx: any): Promise<any> => {
+      const txHex = Array.from(tx.serialize() as Uint8Array)
+        .map((b: number) => b.toString(16).padStart(2, '0')).join('');
+      console.log('[ZKAuction] balanceUnsealedTransaction called');
+      const balanced = await walletConnector.balanceUnsealedTransaction(txHex);
+      if (!balanced?.tx) throw new Error(`balanceUnsealedTransaction returned invalid result: ${JSON.stringify(balanced)}`);
+      const { Transaction } = await import('@midnight-ntwrk/ledger-v8');
+      const hex = balanced.tx.startsWith('0x') ? balanced.tx.slice(2) : balanced.tx;
+      const bytes = Uint8Array.from(hex.match(/.{1,2}/g)!.map((b: string) => parseInt(b, 16)));
+      return Transaction.deserialize('signature', 'proof', 'binding', bytes);
+    },
+  } as any;
 
   // ── Provider 2: midnightProvider ─────────────────────────────────────────
-  // Submits finalized transactions to the Midnight node over WebSocket.
-  // The wallet itself exposes this — it knows which node to talk to.
-  const midnightProvider = buildMidnightProvider(walletConnector);
+  const midnightProvider = {
+    submitTx: async (tx: any): Promise<any> => {
+      const txHex = Array.from(tx.serialize() as Uint8Array)
+        .map((b: number) => b.toString(16).padStart(2, '0')).join('');
+      console.log('[ZKAuction] submitTransaction called');
+      const result = await walletConnector.submitTransaction(txHex);
+      if (typeof result === 'string' && result) return result;
+      if (result?.transactionId) return result.transactionId;
+      if (result?.id) return result.id;
+      return txHex.slice(0, 64);
+    },
+  } as any;
 
   // ── Provider 3: publicDataProvider ───────────────────────────────────────
-  // Reads contract public ledger state from the Midnight indexer.
-  // Uses GraphQL subscriptions for live state updates.
-  // Note: indexerPublicDataProvider is a factory function, not a constructor.
   const publicDataProvider = indexerPublicDataProvider(
     network.indexerUri,
     network.indexerWsUri
   );
 
-  // ── Provider 4: proofProvider ────────────────────────────────────────────
-  // Sends private witnesses to the remote Preprod proof server.
-  // This is where ZK proofs are generated.
-  // Note: httpClientProofProvider is a factory function, not a constructor.
-  const proofProvider = httpClientProofProvider(
-    network.proofServerUri
-  );
-
-  // ── Provider 5: zkConfigProvider ─────────────────────────────────────────
-  // Fetches ZK artifacts (prover key, verifier key, ZKIR) for each circuit.
-  // These are stored on-chain after deployment and fetched via the indexer.
-  // Required by the proof server to generate proofs for the right circuit.
-  // Note: FetchZkConfigProvider IS a class (capital F, lowercase k).
-  const zkConfigProvider = new FetchZkConfigProvider(
-    network.indexerUri,
-    fetch
-  );
-
   // ── Provider 6: privateStateProvider ─────────────────────────────────────
-  // Stores and retrieves private state (witnesses) on the user's machine.
-  // Uses IndexedDB in browsers (persists across page reloads).
-  // This is where reserve_price and commitment_salt are stored locally.
-  const privateStateProvider = buildInMemoryPrivateStateProvider();
+  const privateStateProvider = buildLocalStoragePrivateStateProvider();
 
   return {
     walletProvider,
@@ -258,86 +273,58 @@ export async function buildProviders(
   };
 }
 
-// ── Wallet Provider Adapter ───────────────────────────────────────────────────
-// Implements the SDK's WalletProvider interface using the 1AM wallet connector.
-// The SDK requires: balanceTx(tx, ttl?), getCoinPublicKey(), getEncryptionPublicKey()
-async function buildWalletProvider(connector: any, walletAddress: string) {
-  // Extract coin and encryption public keys directly from the wallet if possible,
-  // or fall back to decoding the address string.
-  const keys = await extractKeysFromConnectorOrAddress(connector, walletAddress);
+// (old buildWalletProvider and buildMidnightProvider removed — logic is now inline in buildProviders)
+
+// ── Local Storage Private State Provider ──────────────────────────────────
+// Stores private state in browser localStorage so it survives page refreshes.
+// Handles serialization of BigInt and Uint8Array.
+function buildLocalStoragePrivateStateProvider() {
+  const PREFIX = 'zkauction_private_state_';
+  let currentContractAddress = 'unscoped';
+
+  const replacer = (key: string, value: any) => {
+    if (typeof value === 'bigint') return { _type: 'bigint', value: value.toString() };
+    
+    // Handle NodeJS Buffer which serializes via toJSON() to { type: 'Buffer', data: [...] }
+    if (value && value.type === 'Buffer' && Array.isArray(value.data)) {
+      return { _type: 'Uint8Array', value: value.data };
+    }
+    
+    // Handle native Uint8Array which doesn't have toJSON()
+    if (value instanceof Uint8Array) {
+      return { _type: 'Uint8Array', value: Array.from(value) };
+    }
+    
+    return value;
+  };
+
+  const reviver = (key: string, value: any) => {
+    if (value && typeof value === 'object') {
+      if (value._type === 'bigint') return BigInt(value.value);
+      if (value._type === 'Uint8Array') return new Uint8Array(value.value);
+    }
+    return value;
+  };
 
   return {
-    // balanceTx: signs + balances the transaction.
-    // The 1AM wallet might use different argument shapes — we try both.
-    balanceTx: async (tx: any, ttlOrCoinSelection?: any): Promise<any> => {
-      console.log('[ZKAuction] balanceTx called, connector methods:', Object.keys(connector));
-      // Try standard WalletProvider signature first (tx, ttl?: Date)
-      if (typeof connector.balanceTx === 'function') {
-        return connector.balanceTx(tx, ttlOrCoinSelection);
-      }
-      // Try Cardano-style (tx, coinSelection)
-      if (typeof connector.balance === 'function') {
-        return connector.balance(tx);
-      }
-      throw new Error(
-        'Wallet connector does not implement balanceTx. ' +
-        `Available methods: [${Object.keys(connector).join(', ')}]`
-      );
+    setContractAddress: (address: string) => {
+      currentContractAddress = address;
     },
-
-    // getCoinPublicKey: returns the Jubjub public key (32 bytes as hex string).
-    // Required by the SDK for ZK proof generation.
-    getCoinPublicKey: () => {
-      // Try the connector's own method first
-      if (typeof connector.getCoinPublicKey === 'function') return connector.getCoinPublicKey();
-      if (connector.coinPublicKey) return connector.coinPublicKey;
-      // Fall back to address-decoded key
-      console.log('[ZKAuction] getCoinPublicKey: using address-decoded key');
-      return keys.coinPublicKey;
-    },
-
-    // getEncryptionPublicKey: returns the encryption public key (32 bytes as hex).
-    getEncryptionPublicKey: () => {
-      if (typeof connector.getEncryptionPublicKey === 'function') return connector.getEncryptionPublicKey();
-      if (connector.encryptionPublicKey) return connector.encryptionPublicKey;
-      console.log('[ZKAuction] getEncryptionPublicKey: using address-decoded key');
-      return keys.encryptionPublicKey;
-    },
-  } as any;
-}
-
-// ── Midnight Provider Adapter ─────────────────────────────────────────────────
-// The midnightProvider submits finalized transactions to the Midnight node.
-function buildMidnightProvider(connector: any) {
-  return {
-    submitTx: async (tx: any): Promise<any> => {
-      if (typeof connector.submitTx === 'function') return connector.submitTx(tx);
-      if (typeof connector.submit === 'function') return connector.submit(tx);
-      throw new Error(
-        'Wallet connector does not implement submitTx. ' +
-        `Available methods: [${Object.keys(connector).join(', ')}]`
-      );
-    },
-  } as any;
-}
-
-// ── In-Memory Private State Provider ─────────────────────────────────────────
-// For development: stores private state in memory (cleared on page refresh).
-// Phase 4 will upgrade this to IndexedDB for persistence.
-//
-// The private state maps: contractAddress+stateId → AuctionPrivateState
-function buildInMemoryPrivateStateProvider() {
-  const store = new Map<string, AuctionPrivateState>();
-
-  return {
     get: async (id: string): Promise<AuctionPrivateState | undefined> => {
-      return store.get(id);
+      try {
+        const item = window.localStorage.getItem(`${PREFIX}${currentContractAddress}_${id}`);
+        if (!item) return undefined;
+        return JSON.parse(item, reviver);
+      } catch (e) {
+        console.error('Failed to load private state from localStorage', e);
+        return undefined;
+      }
     },
     set: async (id: string, state: AuctionPrivateState): Promise<void> => {
-      store.set(id, state);
+      window.localStorage.setItem(`${PREFIX}${currentContractAddress}_${id}`, JSON.stringify(state, replacer));
     },
     remove: async (id: string): Promise<void> => {
-      store.delete(id);
+      window.localStorage.removeItem(`${PREFIX}${currentContractAddress}_${id}`);
     },
   } as any;
 }
@@ -345,17 +332,29 @@ function buildInMemoryPrivateStateProvider() {
 // ── Network Configs ───────────────────────────────────────────────────────────
 // Pre-built configs for common environments.
 // Values sourced from Midnight's official documentation.
+// Network IDs (exact strings for wallet.connect() and setNetworkId()):
+//   'preview'  — Midnight Preview testnet (most stable for current dev)
+//   'preprod'  — Midnight Preprod testnet
+//   'devnet'   — Local docker stack
 
-/** Midnight Preprod (TestNet) endpoints */
-export const PREPROD_CONFIG: MidnightNetworkConfig = {
+/** Midnight Preview network endpoints (official public endpoints, no key required) */
+export const PREVIEW_CONFIG: MidnightNetworkConfig = {
   nodeWsUrl:      process.env.NEXT_PUBLIC_NODE_WS_URL
-                    ?? 'wss://rpc.testnet-01.midnight.network/ws',
+                    ?? 'wss://rpc.preview.midnight.network/ws',
   indexerUri:     process.env.NEXT_PUBLIC_INDEXER_URI
-                    ?? 'https://indexer.testnet-01.midnight.network/api/v1/graphql',
+                    ?? 'https://indexer.preview.midnight.network/api/v4/graphql',
   indexerWsUri:   process.env.NEXT_PUBLIC_INDEXER_WS_URI
-                    ?? 'wss://indexer.testnet-01.midnight.network/api/v1/graphql',
+                    ?? 'wss://indexer.preview.midnight.network/api/v4/graphql',
   proofServerUri: process.env.NEXT_PUBLIC_PROOF_SERVER_URI
-                    ?? 'https://proving.testnet-01.midnight.network',
+                    ?? 'https://proving.preview.midnight.network',
+};
+
+/** Midnight Preprod endpoints */
+export const PREPROD_CONFIG: MidnightNetworkConfig = {
+  nodeWsUrl:      'wss://rpc.preprod.midnight.network/ws',
+  indexerUri:     'https://indexer.preprod.midnight.network/api/v4/graphql',
+  indexerWsUri:   'wss://indexer.preprod.midnight.network/api/v4/graphql',
+  proofServerUri: 'https://proving.preprod.midnight.network',
 };
 
 /** Local DevNet (docker compose up) endpoints */
@@ -366,11 +365,15 @@ export const DEVNET_CONFIG: MidnightNetworkConfig = {
   proofServerUri: 'http://localhost:6300',
 };
 
-/** Returns the appropriate config based on NEXT_PUBLIC_MIDNIGHT_NETWORK env var */
+/**
+ * Returns the appropriate network config based on NEXT_PUBLIC_MIDNIGHT_NETWORK.
+ * The env var should be the exact network ID string: 'preview', 'preprod', or 'devnet'.
+ */
 export function getNetworkConfig(): MidnightNetworkConfig {
-  const network = process.env.NEXT_PUBLIC_MIDNIGHT_NETWORK ?? 'preprod';
-  // If it's 'devnet' or 'DevNet', use the local config. Otherwise assume preprod.
-  return network.toLowerCase() === 'devnet' ? DEVNET_CONFIG : PREPROD_CONFIG;
+  const network = (process.env.NEXT_PUBLIC_MIDNIGHT_NETWORK ?? 'preview').toLowerCase();
+  if (network === 'devnet') return DEVNET_CONFIG;
+  if (network === 'preprod') return PREPROD_CONFIG;
+  return PREVIEW_CONFIG; // default: 'preview'
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -384,15 +387,21 @@ function sleep(ms: number): Promise<void> {
  */
 async function extractKeysFromConnectorOrAddress(connector: any, walletAddress: string) {
   try {
-    // 1. First try to get the keys directly from the 1AM wallet API
+    // 1. First: try to get keys directly from the 1AM wallet API via getShieldedAddresses()
+    //    The wallet returns { shieldedAddress, shieldedCoinPublicKey, shieldedEncryptionPublicKey }
     if (typeof connector.getShieldedAddresses === 'function') {
       const res = await connector.getShieldedAddresses();
+      console.log('[ZKAuction] extractKeys: getShieldedAddresses =>', JSON.stringify(res, null, 2));
+
+      // Single object response (1AM wallet on preview / preprod)
       if (res && res.shieldedCoinPublicKey && res.shieldedEncryptionPublicKey) {
+        console.log('[ZKAuction] extractKeys: using shieldedCoinPublicKey / shieldedEncryptionPublicKey directly');
         return {
           coinPublicKey: res.shieldedCoinPublicKey,
           encryptionPublicKey: res.shieldedEncryptionPublicKey,
         };
       }
+      // Array response
       if (Array.isArray(res) && res[0] && res[0].shieldedCoinPublicKey) {
         return {
           coinPublicKey: res[0].shieldedCoinPublicKey,
@@ -413,10 +422,17 @@ async function extractKeysFromConnectorOrAddress(connector: any, walletAddress: 
     if (!walletAddress || walletAddress === 'unknown') {
       throw new Error('Cannot extract keys from unknown address');
     }
-    
-    // Check if it's an unshielded address being passed in fallback
-    if (walletAddress.startsWith('tdu1')) {
-      throw new Error('An unshielded address (tdu1...) cannot be used for ZK proofs. Please ensure your wallet provides a shielded address.');
+
+    // Reject unshielded addresses (they can't provide ZK keys)
+    const isUnshielded =
+      walletAddress.startsWith('tdu1') ||
+      walletAddress.startsWith('mn_addr_') ||
+      walletAddress.startsWith('mn_unshield');
+    if (isUnshielded) {
+      throw new Error(
+        'An unshielded address cannot be used for ZK proofs. ' +
+        'Please ensure your 1AM wallet has a shielded address and is fully synced.'
+      );
     }
 
     const { ShieldedAddress, MidnightBech32m } = (await import(

@@ -14,12 +14,14 @@ import type { MidnightWalletConnector } from '@/lib/providers';
 export interface WalletHookState {
   isConnecting: boolean;
   isConnected: boolean;
+  isPendingError: boolean;       // true when wallet threw "already pending"
   address: string | null;
   shortAddress: string | null;
   error: string | null;
   connector: MidnightWalletConnector | null;
   connect: () => Promise<void>;
   disconnect: () => void;
+  resetAndReconnect: () => void; // clears the pending error and retries
   debugInfo: string | null;
 }
 
@@ -116,9 +118,9 @@ async function connectToWallet(wallet: any, key: string): Promise<MidnightWallet
   // Try .connect()
   if (typeof wallet.connect === 'function') {
     console.log('[ZKAuction] Using .connect()');
-    // The 1AM wallet connect() requires the EXACT Midnight network ID string.
-    // 'preprod' = Midnight Preprod testnet. 'devnet' = local docker stack.
-    const networkId = (process.env.NEXT_PUBLIC_MIDNIGHT_NETWORK === 'DevNet') ? 'devnet' : 'preprod';
+    // Pass the EXACT network ID string — must match what the 1AM wallet expects.
+    // Set NEXT_PUBLIC_MIDNIGHT_NETWORK in .env.local to 'preview', 'preprod', or 'devnet'.
+    const networkId = (process.env.NEXT_PUBLIC_MIDNIGHT_NETWORK ?? 'preview').toLowerCase();
     console.log('[ZKAuction] Connecting to network:', networkId);
     const result = await wallet.connect(networkId);
     if (result && typeof result === 'object') return result;
@@ -218,6 +220,7 @@ async function waitForWallet(timeoutMs: number): Promise<{ wallet: any; key: str
 export function useWallet(): WalletHookState {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isPendingError, setIsPendingError] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
@@ -295,6 +298,9 @@ export function useWallet(): WalletHookState {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Wallet connection failed';
       console.error('[ZKAuction] Connection error:', err);
+      // Detect the "already pending" error specifically so the UI can show a retry button
+      const isPending = msg.toLowerCase().includes('already pending');
+      setIsPendingError(isPending);
       setError(msg);
       setDebugInfo(null);
     } finally {
@@ -302,17 +308,34 @@ export function useWallet(): WalletHookState {
     }
   }, []);
 
+  /**
+   * Clears the "already pending" state and triggers a fresh connection attempt.
+   * The 1AM wallet holds a pending flag internally — there is no JS API to clear it,
+   * but dismissing the extension popup (or waiting ~30 s) resets it on the wallet side.
+   * This function simply resets our local state so the user can try again cleanly.
+   */
+  const resetAndReconnect = useCallback(() => {
+    setError(null);
+    setDebugInfo(null);
+    setIsPendingError(false);
+    setIsConnecting(false);
+    // Small delay so the user can dismiss the wallet popup before we call connect again
+    setTimeout(() => connect(), 300);
+  }, [connect]);
+
   const disconnect = useCallback(() => {
     setConnector(null);
     setAddress(null);
     setIsConnected(false);
     setError(null);
+    setIsPendingError(false);
     setDebugInfo(null);
   }, []);
 
   return {
     isConnecting,
     isConnected,
+    isPendingError,
     address,
     shortAddress,
     error,
@@ -320,6 +343,7 @@ export function useWallet(): WalletHookState {
     connector,
     connect,
     disconnect,
+    resetAndReconnect,
   };
 }
 
