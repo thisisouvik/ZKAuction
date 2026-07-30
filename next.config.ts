@@ -11,8 +11,32 @@ const nextConfig: NextConfig = {
     '@midnight-ntwrk/midnight-js-contracts',
     '@midnight-ntwrk/compact-runtime',
     '@midnight-ntwrk/compact-js',
+    '@midnight-ntwrk/compact-js/effect',
     '@midnight-ntwrk/midnight-js-level-private-state-provider',
   ],
+
+  // ── Static file headers ────────────────────────────────────────────────────
+  // Serve the compiled ZK key files (.prover, .verifier) from /public/keys/
+  // and ZKIR files (.bzkir) from /public/zkir/ with the correct binary
+  // content-type so FetchZkConfigProvider can fetch them via HTTP.
+  async headers() {
+    return [
+      {
+        source: '/keys/:file*',
+        headers: [
+          { key: 'Content-Type', value: 'application/octet-stream' },
+          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+        ],
+      },
+      {
+        source: '/zkir/:file*',
+        headers: [
+          { key: 'Content-Type', value: 'application/octet-stream' },
+          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+        ],
+      },
+    ];
+  },
 
   // ── Turbopack browser aliases ──────────────────────────────────────────────
   // Replace Node.js-only packages with browser-compatible implementations
