@@ -104,17 +104,21 @@ export class AuctionAPI {
    * @returns Connected AuctionAPI instance ready to call circuits
    */
   static async connect(walletConnector: MidnightWalletConnector): Promise<AuctionAPI> {
-    // Set the network (TestNet = Midnight Preprod)
-    // This MUST be called before any SDK operation
+    // Set the global network ID — this MUST exactly match what the 1AM wallet expects.
+    // 'preprod' = Midnight Preprod testnet. 'devnet' = local docker stack.
+    // Do NOT use 'TestNet' — that is only our internal env-var label.
     const networkEnv = process.env.NEXT_PUBLIC_MIDNIGHT_NETWORK ?? 'TestNet';
-    setNetworkId(networkEnv === 'DevNet' ? 'DevNet' : 'TestNet');
+    const networkId = networkEnv === 'DevNet' ? 'devnet' : 'preprod';
+    setNetworkId(networkId);
+    console.log('[ZKAuction] Set network ID to:', networkId);
+
+    // Get wallet address — the 1AM wallet may return address as a property (string)
+    // OR as an async function. We handle both shapes here.
+    const walletAddress = await resolveAddress(walletConnector);
 
     // Build the 6-provider stack
     const network = getNetworkConfig();
-    const providers = await buildProviders({ network, walletConnector });
-
-    // Get wallet address for display and access control checks
-    const walletAddress = await walletConnector.address().catch(() => 'unknown');
+    const providers = await buildProviders({ network, walletConnector, walletAddress });
 
     // Derive the ZK secret key from wallet.
     // In production: use wallet's key derivation API.
@@ -483,15 +487,98 @@ function toHex(bytes: Uint8Array | string): string {
  */
 async function loadCompiledContract(): Promise<unknown> {
   try {
-    // @ts-ignore - this file is generated during the build step by compactc
-    const generated = await import('../contract/src/generated/index.cjs');
+    // @ts-ignore - this file is generated during the build step by compact compile
+    const generated = await import('../contract/src/generated/contract/index.js');
     return generated.default ?? generated;
   } catch {
     throw new AuctionApiError(
       AuctionErrorCode.PROVIDERS_NOT_READY,
-      'Compiled contract not found at contract/src/generated/index.cjs.\n' +
+      'Compiled contract not found at contract/src/generated/contract/index.js.\n' +
       'Run: npm run compile:contract\n' +
-      'This requires the compactc compiler to be installed (see Phase 1 docs).'
+      'This requires the Midnight compact compiler to be installed.'
     );
   }
 }
+
+/**
+ * Resolves the wallet address from a connector.
+ * The 1AM wallet may expose address as:
+ *   - An async function: conn.address() → Promise<string>
+ *   - A sync function:   conn.address() → string
+ *   - A plain string:    conn.address   → string
+ *   - Via .state():      conn.state() → { address: string }
+ */
+async function resolveAddress(connector: any): Promise<string> {
+  try {
+    if (typeof connector.address === 'function') {
+      const result = await connector.address();
+      if (typeof result === 'string') return result;
+    }
+    if (typeof connector.address === 'string' && connector.address) {
+      return connector.address;
+    }
+    // Helper to extract a string address from any generic result shape
+    const extractString = (res: any): string | null => {
+      if (!res) return null;
+      if (typeof res === 'string') {
+        if (res.startsWith('tds1') || res.startsWith('tdu1')) return res;
+      }
+      
+      // Recursive search for a valid Midnight address string
+      const findAddress = (obj: any, depth = 0): string | null => {
+        if (depth > 5 || !obj) return null;
+        if (typeof obj === 'string' && (obj.startsWith('tds1') || obj.startsWith('tdu1'))) return obj;
+        if (typeof obj === 'object') {
+          for (const key of Object.keys(obj)) {
+            const found = findAddress(obj[key], depth + 1);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const found = findAddress(res);
+      if (found) return found;
+
+      // Fallbacks
+      if (typeof res === 'string') return res;
+      if (Array.isArray(res) && res.length > 0) {
+        if (typeof res[0] === 'string') return res[0];
+      }
+      return null;
+    };
+
+    if (typeof connector.getAddress === 'function') {
+      const result = extractString(await connector.getAddress());
+      if (result) return result;
+    }
+    if (typeof connector.getShieldedAddresses === 'function') {
+      try {
+        const rawRes = await connector.getShieldedAddresses();
+        const strRes = extractString(rawRes);
+        if (strRes) return strRes;
+        
+        // If it failed to extract, throw an error to surface it to the user
+        throw new Error(`getShieldedAddresses returned: ${JSON.stringify(rawRes, (k, v) => typeof v === 'bigint' ? v.toString() : v)}`);
+      } catch (e: any) {
+        throw new Error(`Wallet API Error: ${e.message}`);
+      }
+    }
+    if (typeof connector.getUnshieldedAddress === 'function') {
+      const result = extractString(await connector.getUnshieldedAddress());
+      if (result) return result;
+    }
+    if (typeof connector.state === 'function') {
+      const state = await connector.state();
+      if (state?.address) return state.address;
+      if (state?.coinPublicKey) return state.coinPublicKey;
+    }
+    // Last resort — log and return placeholder
+    console.warn('[ZKAuction] Could not resolve wallet address. Connector:', connector);
+    return 'unknown';
+  } catch (e) {
+    console.warn('[ZKAuction] Error resolving address:', e);
+    return 'unknown';
+  }
+}
+

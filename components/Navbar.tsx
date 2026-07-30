@@ -110,26 +110,47 @@ export function Navbar({ wallet }: NavbarProps) {
               onDisconnect={wallet.disconnect}
             />
           ) : (
-            <button
-              id="wallet-connect-btn"
-              className="btn btn-primary"
-              onClick={wallet.connect}
-              disabled={wallet.isConnecting}
-              aria-label="Connect 1AM wallet"
-              style={{ gap: 8, fontSize: 13, padding: '9px 18px' }}
-            >
-              {wallet.isConnecting ? (
-                <>
-                  <span className="spinner" style={{ width: 14, height: 14 }} />
-                  Connecting…
-                </>
-              ) : (
-                <>
-                  <WalletIcon />
-                  Connect Wallet
-                </>
+            <>
+              <button
+                id="wallet-connect-btn"
+                className="btn btn-primary"
+                onClick={wallet.connect}
+                disabled={wallet.isConnecting}
+                aria-label="Connect 1AM wallet"
+                style={{ gap: 8, fontSize: 13, padding: '9px 18px' }}
+              >
+                {wallet.isConnecting ? (
+                  <>
+                    <span className="spinner" style={{ width: 14, height: 14 }} />
+                    Connecting…
+                  </>
+                ) : (
+                  <>
+                    <WalletIcon />
+                    Connect Wallet
+                  </>
+                )}
+              </button>
+              {/* Debug info shown while connecting — helps diagnose wallet detection issues */}
+              {wallet.isConnecting && wallet.debugInfo && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 8,
+                  padding: '8px 14px',
+                  background: 'rgba(8,10,18,0.95)',
+                  border: '1px solid rgba(139,92,246,0.3)',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  color: 'var(--purple-300)',
+                  whiteSpace: 'nowrap',
+                  zIndex: 200,
+                }}>
+                  ⏳ {wallet.debugInfo}
+                </div>
               )}
-            </button>
+            </>
           )}
         </div>
       </div>
