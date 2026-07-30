@@ -44,8 +44,8 @@ function parseArgs() {
   return {
     reserveNight:   Number(get('--reserve',  '1000')),
     durationBlocks: BigInt(get('--duration', '200')!),
-    itemDescription: get('--item', 'ZKAuction Demo Item — Midnight Preprod'),
-    network:        get('--network', process.env.MIDNIGHT_NETWORK ?? 'TestNet') as 'TestNet' | 'DevNet',
+    itemDescription: get('--item', 'ZKAuction Demo Item — Midnight Preview') as string,
+    network:        get('--network', process.env.NEXT_PUBLIC_MIDNIGHT_NETWORK ?? 'preview') as string,
   };
 }
 
@@ -65,19 +65,19 @@ async function main() {
 
   // ── Step 1: Load the compiled contract ──────────────────────────────────
   console.log('📋 Step 1: Loading compiled contract...');
-  const generatedPath = path.join(ROOT, 'contract', 'src', 'generated', 'index.cjs');
+  const generatedPath = path.join(ROOT, 'contract', 'src', 'generated', 'contract', 'index.js');
+  const generatedPathUrl = 'file://' + generatedPath.replace(/\\/g, '/');
 
   if (!fs.existsSync(generatedPath)) {
     console.error('\n❌ Compiled contract not found at:', generatedPath);
     console.error('   Run: npm run compile:contract\n');
-    console.error('   This requires the compactc compiler. Install it from:');
+    console.error('   This requires the compact compiler. Install it from:');
     console.error('   https://docs.midnight.network/develop/tutorial/building/prereqs\n');
     process.exit(1);
   }
 
-  const { createRequire } = await import('module');
-  const require = createRequire(import.meta.url);
-  const compiledContract = require(generatedPath);
+  const compiledModule = await import(generatedPathUrl);
+  const compiledContract = compiledModule.Contract;
 
   if (compiledContract.__isStub) {
     console.error('\n❌ Found stub contract — run `npm run compile:contract` first.\n');
@@ -101,18 +101,18 @@ async function main() {
   console.log('🔧 Step 3: Building Midnight provider stack...');
 
   const { setNetworkId } = await import('@midnight-ntwrk/midnight-js-network-id');
-  setNetworkId(args.network);
+  setNetworkId(args.network.toLowerCase());
 
   // For server-side (Node.js) deployment, we use different providers
   // than the browser-based ones in lib/providers.ts
   const nodeWsUrl   = process.env.NEXT_PUBLIC_NODE_WS_URL
-                     ?? 'wss://rpc.testnet-01.midnight.network/ws';
+                     ?? 'wss://rpc.preview.midnight.network/ws';
   const indexerUri  = process.env.NEXT_PUBLIC_INDEXER_URI
-                     ?? 'https://indexer.testnet-01.midnight.network/api/v1/graphql';
+                     ?? 'https://indexer.preview.midnight.network/api/v4/graphql';
   const indexerWsUri = process.env.NEXT_PUBLIC_INDEXER_WS_URI
-                      ?? 'wss://indexer.testnet-01.midnight.network/api/v1/graphql';
+                      ?? 'wss://indexer.preview.midnight.network/api/v4/graphql';
   const proofServerUri = process.env.NEXT_PUBLIC_PROOF_SERVER_URI
-                        ?? 'http://localhost:6300';
+                        ?? 'https://proving.preview.midnight.network';
 
   console.log(`   Node:         ${nodeWsUrl}`);
   console.log(`   Indexer:      ${indexerUri}`);
@@ -125,13 +125,13 @@ async function main() {
 
   try {
     const { deployContract } = await import('@midnight-ntwrk/midnight-js-contracts');
-    const { IndexerPublicDataProvider } = await import(
+    const { indexerPublicDataProvider } = await import(
       '@midnight-ntwrk/midnight-js-indexer-public-data-provider'
     ) as any;
-    const { HttpClientProofProvider } = await import(
+    const { httpClientProofProvider } = await import(
       '@midnight-ntwrk/midnight-js-http-client-proof-provider'
     ) as any;
-    const { FetchZKConfigProvider } = await import(
+    const { FetchZkConfigProvider } = await import(
       '@midnight-ntwrk/midnight-js-fetch-zk-config-provider'
     ) as any;
 
@@ -141,7 +141,7 @@ async function main() {
 
     // Hash item description
     const itemHash = crypto.createHash('sha256')
-      .update(args.itemDescription)
+      .update(args.itemDescription ?? 'ZKAuction Demo Item')
       .digest();
 
     // Private state for deployment
@@ -154,9 +154,9 @@ async function main() {
     };
 
     // Build providers (simplified Node.js version)
-    const publicDataProvider = new IndexerPublicDataProvider(indexerUri, indexerWsUri);
-    const proofProvider      = new HttpClientProofProvider(proofServerUri);
-    const zkConfigProvider   = new FetchZKConfigProvider(indexerUri, fetch);
+    const publicDataProvider = indexerPublicDataProvider(indexerUri, indexerWsUri);
+    const proofProvider      = httpClientProofProvider(proofServerUri);
+    const zkConfigProvider   = new FetchZkConfigProvider(indexerUri, fetch);
 
     // NOTE: For full deployment with a real wallet provider, you need the
     // Midnight CLI wallet provider. See the Midnight developer docs for
