@@ -8,14 +8,14 @@ interface Toast {
   id: string;
   type: ToastType;
   title: string;
-  message?: string;
+  message?: ReactNode;
 }
 
 interface ToastContextValue {
   toasts: Toast[];
-  success: (title: string, message?: string) => void;
-  error:   (title: string, message?: string) => void;
-  info:    (title: string, message?: string) => void;
+  success: (title: string, message?: ReactNode) => void;
+  error:   (title: string, message?: ReactNode) => void;
+  info:    (title: string, message?: ReactNode) => void;
   dismiss: (id: string) => void;
 }
 
@@ -24,7 +24,7 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const add = useCallback((type: ToastType, title: string, message?: string) => {
+  const add = useCallback((type: ToastType, title: string, message?: ReactNode) => {
     const id = Math.random().toString(36).slice(2);
     const toast: Toast = { id, type, title, message };
     setToasts(prev => [...prev, toast]);
@@ -91,7 +91,7 @@ function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id
           <div className="flex-1 min-w-0">
             <p style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{t.title}</p>
             {t.message && (
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{t.message}</p>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{t.message}</div>
             )}
           </div>
           <button

@@ -6,6 +6,7 @@
  */
 
 import type { WalletHookState } from '@/hooks/useWallet';
+import Link from 'next/link';
 
 interface NavbarProps {
   wallet: WalletHookState;
@@ -92,23 +93,25 @@ export function Navbar({ wallet }: NavbarProps) {
           </div>
         </div>
 
-        {/* Nav links (desktop) */}
         <nav
           aria-label="Main navigation"
           style={{ display: 'flex', alignItems: 'center', gap: 4 }}
         >
-          <NavLink href="#auctions">Auctions</NavLink>
-          <NavLink href="#create">Create</NavLink>
-          <NavLink href="#privacy">Privacy Model</NavLink>
+          <NavLink href="/">Home</NavLink>
+          <NavLink href="/auctions">Auctions</NavLink>
+          <NavLink href="/privacy">Privacy Model</NavLink>
         </nav>
 
-        {/* Wallet button */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* Wallet button area */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'relative' }}>
           {wallet.isConnected ? (
             <ConnectedBadge
               address={wallet.shortAddress!}
               onDisconnect={wallet.disconnect}
             />
+          ) : wallet.isPendingError ? (
+            /* ── "Already pending" error state ── */
+            <PendingErrorBadge onReset={wallet.resetAndReconnect} onDiscard={wallet.disconnect} />
           ) : (
             <>
               <button
@@ -131,7 +134,7 @@ export function Navbar({ wallet }: NavbarProps) {
                   </>
                 )}
               </button>
-              {/* Debug info shown while connecting — helps diagnose wallet detection issues */}
+              {/* Debug info shown while connecting */}
               {wallet.isConnecting && wallet.debugInfo && (
                 <div style={{
                   position: 'absolute',
@@ -150,6 +153,25 @@ export function Navbar({ wallet }: NavbarProps) {
                   ⏳ {wallet.debugInfo}
                 </div>
               )}
+              {/* Generic (non-pending) error */}
+              {!wallet.isConnecting && wallet.error && !wallet.isPendingError && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 8,
+                  padding: '10px 14px',
+                  background: 'rgba(239,68,68,0.08)',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  color: '#fca5a5',
+                  maxWidth: 280,
+                  zIndex: 200,
+                }}>
+                  ⚠️ {wallet.error}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -160,7 +182,7 @@ export function Navbar({ wallet }: NavbarProps) {
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <a
+    <Link
       href={href}
       style={{
         padding: '6px 14px',
@@ -181,7 +203,81 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
       }}
     >
       {children}
-    </a>
+    </Link>
+  );
+}
+
+/**
+ * Shown when the 1AM wallet throws "Connection request already pending".
+ * Instructs the user to dismiss the wallet popup, then offers Discard & Retry.
+ */
+function PendingErrorBadge({
+  onReset,
+  onDiscard,
+}: {
+  onReset: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div style={{ position: 'relative' }}>
+      {/* Amber warning badge inline with navbar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 14px',
+        background: 'rgba(251,191,36,0.08)',
+        border: '1px solid rgba(251,191,36,0.4)',
+        borderRadius: 10,
+        fontSize: 13,
+        color: '#fde68a',
+        cursor: 'default',
+      }}>
+        <span>⏳</span>
+        <span>Connection pending…</span>
+      </div>
+
+      {/* Dropdown panel */}
+      <div style={{
+        position: 'absolute',
+        top: 'calc(100% + 8px)',
+        right: 0,
+        background: 'rgba(8,10,18,0.97)',
+        border: '1px solid rgba(251,191,36,0.35)',
+        borderRadius: 12,
+        padding: '16px',
+        width: 300,
+        zIndex: 300,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+      }}>
+        <p style={{ fontSize: 13, color: '#fde68a', fontWeight: 600, margin: '0 0 6px' }}>
+          ⚠️ Wallet popup already open
+        </p>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: 1.5 }}>
+          The 1AM wallet has a connection request waiting. Either{' '}
+          <strong style={{ color: 'var(--text-primary)' }}>approve or reject it</strong>{' '}
+          in the extension popup, then click Retry below.
+        </p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            id="wallet-pending-retry-btn"
+            className="btn btn-primary"
+            onClick={onReset}
+            style={{ fontSize: 12, padding: '7px 14px', flex: 1, gap: 6 }}
+          >
+            🔄 Discard &amp; Retry
+          </button>
+          <button
+            id="wallet-pending-cancel-btn"
+            className="btn btn-ghost"
+            onClick={onDiscard}
+            style={{ fontSize: 12, padding: '7px 12px' }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
