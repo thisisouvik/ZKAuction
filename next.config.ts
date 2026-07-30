@@ -3,26 +3,39 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactCompiler: true,
 
-  // ── Midnight SDK Node.js exclusions ────────────────────────────────────────
-  // The Midnight provider packages use Node.js-only modules (WebSocket, RxJS,
-  // graphql-ws with isomorphic-ws). These must never be included in the
-  // browser bundle — they are dynamically imported from client components only
-  // at runtime, so webpack/Turbopack must be told to leave them alone.
+  // ── Midnight SDK — keep these out of the SSR bundle ───────────────────────
+  // These packages use Node.js APIs (level-db, native WebSocket, RxJS) that
+  // cannot run during Next.js SSR. We exclude them from the server bundle
+  // and import them dynamically only in client components.
   serverExternalPackages: [
-    '@midnight-ntwrk/midnight-js-indexer-public-data-provider',
-    '@midnight-ntwrk/midnight-js-http-client-proof-provider',
-    '@midnight-ntwrk/midnight-js-fetch-zk-config-provider',
     '@midnight-ntwrk/midnight-js-contracts',
     '@midnight-ntwrk/compact-runtime',
     '@midnight-ntwrk/compact-js',
+    '@midnight-ntwrk/midnight-js-level-private-state-provider',
   ],
 
-  // Turbopack alias for browser (replaces Node.js-only ws with empty stub)
+  // ── Turbopack browser aliases ──────────────────────────────────────────────
+  // Replace Node.js-only packages with browser-compatible implementations
+  // when building the client bundle.
   turbopack: {
     resolveAlias: {
+      // isomorphic-ws → browser native WebSocket
       'isomorphic-ws': { browser: './stubs/isomorphic-ws-browser.js' },
-      'graphql-ws':    { browser: './stubs/graphql-ws-browser.js' },
+      // graphql-ws → browser native WebSocket client implementation
+      'graphql-ws': { browser: './stubs/graphql-ws-browser.js' },
     },
+  },
+
+  // ── Webpack browser aliases (used in production builds) ───────────────────
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        'isomorphic-ws': require.resolve('./stubs/isomorphic-ws-browser.js'),
+        'graphql-ws': require.resolve('./stubs/graphql-ws-browser.js'),
+      };
+    }
+    return config;
   },
 };
 
