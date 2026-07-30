@@ -60,3 +60,17 @@ midnight-private-state.db
 
 # Deployment artifacts
 scripts/deploy-output.json
+
+/lib/generated/prisma
+
+# IDEs & Agents
+.agents/
+.claude/
+.windsurf/
+skills-lock.json
+
+# Compiler / Public Assets
+contract/src/generated/
+public/keys/
+public/zkir/
+stubs/
