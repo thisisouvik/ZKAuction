@@ -191,6 +191,9 @@ export circuit placeBid(bid_amount: Uint<64>): [] {
   // ── Derive the bidder's on-chain identity from their private key
   const bidder_key = disclose(persistentHash<Bytes<32>>(local_secret_key()));
 
+  // ── Seller cannot bid on their own auction
+  assert(bidder_key != seller, "Seller cannot bid on their own auction");
+
   // ── Update public ledger with new highest bid
   highest_bid     = disclose(bid_amount);
   highest_bidder  = bidder_key;

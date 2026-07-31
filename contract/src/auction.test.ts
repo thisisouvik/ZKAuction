@@ -117,10 +117,15 @@ function circuitPlaceBid(
     throw new Error('Bid must exceed current highest bid');
   }
 
+  const derivedBidderKey = deriveKey(bidderKey);
+  if (derivedBidderKey.equals(ledger.seller)) {
+    throw new Error('Seller cannot bid on their own auction');
+  }
+
   return {
     ...ledger,
     highest_bid: bidAmount,
-    highest_bidder: deriveKey(bidderKey),
+    highest_bidder: derivedBidderKey,
     bid_count: ledger.bid_count + 1,
   };
 }
@@ -366,6 +371,15 @@ describe('ZKAuction — Private Reserve Auction', () => {
       expect(() => {
         circuitPlaceBid(ledger, BIDDER_B, 9999n);
       }).toThrow('Auction is not open');
+    });
+
+    it('seller cannot bid on their own auction', () => {
+      let ledger = createLedger(SELLER_KEY);
+      ledger = circuitCreateAuction(ledger, SELLER_KEY, 100n, RESERVE_PRICE, SALT, ITEM_HASH);
+
+      expect(() => {
+        circuitPlaceBid(ledger, SELLER_KEY, 1200n);
+      }).toThrow('Seller cannot bid on their own auction');
     });
 
     it('third party cannot call withdrawExpired', () => {
