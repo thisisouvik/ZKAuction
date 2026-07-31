@@ -12,6 +12,8 @@ import { AuctionStatus } from '@/lib/types';
 interface AuctionCardProps {
   state: AuctionState;
   contractAddress: string;
+  /** Item description from the database (off-chain) */
+  itemDescription?: string;
   /** True when the current user is the seller of this auction */
   isSeller?: boolean;
   /** Called when user wants to place a bid */
@@ -27,6 +29,7 @@ interface AuctionCardProps {
 export function AuctionCard({
   state,
   contractAddress,
+  itemDescription = '',
   isSeller = false,
   onBid,
   onSettle,
@@ -81,9 +84,10 @@ export function AuctionCard({
               fontWeight: 700,
               marginTop: 10,
               color: 'var(--text-primary)',
+              wordBreak: 'break-word',
             }}
           >
-            Auction Item
+            {itemDescription || 'Auction Item'}
           </h2>
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
             {contractAddress.slice(0, 20)}…
@@ -225,7 +229,7 @@ export function AuctionCard({
             className="badge badge-green"
             style={{ padding: '10px 20px', fontSize: 13, width: '100%', justifyContent: 'center' }}
           >
-            ✅ Auction Settled — Winner: {truncHex(state.highest_bidder)}
+            ✅ SOLD! — Winner: {truncHex(state.highest_bidder)}
           </div>
         )}
       </div>
@@ -238,7 +242,7 @@ export function AuctionCard({
 function StatusBadge({ status }: { status: AuctionStatus }) {
   const map: Record<AuctionStatus, { className: string; label: string }> = {
     [AuctionStatus.OPEN]:     { className: 'badge badge-green',  label: '● Live' },
-    [AuctionStatus.SETTLED]:  { className: 'badge badge-cyan',   label: '✓ Settled' },
+    [AuctionStatus.SETTLED]:  { className: 'badge badge-cyan',   label: '✓ Sold' },
     [AuctionStatus.EXPIRED]:  { className: 'badge badge-red',    label: '✕ Expired' },
   };
   const { className, label } = map[status];
