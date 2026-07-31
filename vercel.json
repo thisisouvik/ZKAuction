@@ -1,0 +1,15 @@
+{
+  "name": "zkauction",
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm ci",
+  "framework": "nextjs",
+  "outputDirectory": ".next",
+  "env": {
+    "NEXT_PUBLIC_MIDNIGHT_NETWORK": "TestNet",
+    "NEXT_PUBLIC_NODE_WS_URL": "wss://rpc.testnet-01.midnight.network/ws",
+    "NEXT_PUBLIC_INDEXER_URI": "https://indexer.testnet-01.midnight.network/api/v1/graphql",
+    "NEXT_PUBLIC_INDEXER_WS_URI": "wss://indexer.testnet-01.midnight.network/api/v1/graphql",
+    "NEXT_PUBLIC_PROOF_SERVER_URI": "https://proving.testnet-01.midnight.network"
+  }
+}
