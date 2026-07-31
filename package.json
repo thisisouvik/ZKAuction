@@ -14,7 +14,8 @@
     "env:up": "docker compose up -d",
     "env:down": "docker compose down",
     "env:logs": "docker compose logs -f",
-    "deploy:preprod": "npx ts-node --esm scripts/deploy.ts --network TestNet"
+    "deploy:preprod": "npx ts-node --esm scripts/deploy.ts --network TestNet",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-js": "2.5.1",
