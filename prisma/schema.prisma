@@ -7,8 +7,10 @@ datasource db {
 }
 
 model AuctionContract {
-  id              String   @id @default(uuid())
-  contractAddress String   @unique
-  itemDescription String
-  createdAt       DateTime @default(now())
+  id               String   @id @default(uuid())
+  contractAddress  String   @unique
+  itemDescription  String
+  deployerAddress  String?  // Wallet address of the seller (used for isSeller check)
+  deployTxHash     String?  // Transaction hash of the deploy tx
+  createdAt        DateTime @default(now())
 }
