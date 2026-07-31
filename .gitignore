@@ -36,7 +36,7 @@ yarn-error.log*
 
 # vercel
 .vercel
-
+IMPLEMENTATION _PLAN.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
@@ -71,3 +71,4 @@ skills-lock.json
 # public/keys/
 # public/zkir/
 # stubs/
+
