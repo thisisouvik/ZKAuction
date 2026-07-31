@@ -16,6 +16,7 @@ export interface WalletHookState {
   isConnected: boolean;
   isPendingError: boolean;       // true when wallet threw "already pending"
   address: string | null;
+  coinPublicKey: string | null;  // <--- ADDED THIS
   shortAddress: string | null;
   error: string | null;
   connector: MidnightWalletConnector | null;
@@ -222,6 +223,7 @@ export function useWallet(): WalletHookState {
   const [isConnected, setIsConnected] = useState(false);
   const [isPendingError, setIsPendingError] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
+  const [coinPublicKey, setCoinPublicKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
   const [connector, setConnector] = useState<MidnightWalletConnector | null>(null);
@@ -243,8 +245,16 @@ export function useWallet(): WalletHookState {
         }
         const conn = await connectToWallet(found.wallet, found.key);
         const addr = await getAddress(conn);
+        
+        let cpk = null;
+        if (typeof conn.getShieldedAddresses === 'function') {
+          const s = await conn.getShieldedAddresses();
+          cpk = s?.shieldedCoinPublicKey ?? null;
+        }
+
         setConnector(conn as MidnightWalletConnector);
         setAddress(addr);
+        setCoinPublicKey(cpk);
         setIsConnected(true);
       } catch {
         // Silently ignore — user hasn't connected yet
@@ -290,8 +300,15 @@ export function useWallet(): WalletHookState {
       const conn = await connectToWallet(found.wallet, found.key);
 
       const addr = await getAddress(conn);
+      let cpk = null;
+      if (typeof conn.getShieldedAddresses === 'function') {
+        const s = await conn.getShieldedAddresses();
+        cpk = s?.shieldedCoinPublicKey ?? null;
+      }
+
       setConnector(conn as MidnightWalletConnector);
       setAddress(addr);
+      setCoinPublicKey(cpk);
       setIsConnected(true);
       setDebugInfo(null);
 
@@ -337,6 +354,7 @@ export function useWallet(): WalletHookState {
     isConnected,
     isPendingError,
     address,
+    coinPublicKey,
     shortAddress,
     error,
     debugInfo,

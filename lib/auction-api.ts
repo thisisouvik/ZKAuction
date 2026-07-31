@@ -267,7 +267,19 @@ export class AuctionAPI {
       if (this.providers.privateStateProvider && (this.providers.privateStateProvider as any).setContractAddress) {
         (this.providers.privateStateProvider as any).setContractAddress(params.contract_address);
       }
-      const storedState = await this.providers.privateStateProvider.get(PRIVATE_STATE_ID);
+      
+      let storedState: AuctionPrivateState | null = null;
+      try {
+        storedState = await this.providers.privateStateProvider.get(PRIVATE_STATE_ID);
+      } catch (e: any) {
+        // Ignore, handled below
+      }
+      if (!storedState) {
+        // If not found or null, initialize it (needed for bidders)
+        storedState = { local_secret_key: this.witnesses.local_secret_key() };
+        await this.providers.privateStateProvider.set(PRIVATE_STATE_ID, storedState);
+      }
+      
       const compiledContract = await buildCompiledContract(storedState);
 
       await (submitCallTxAsync as any)(this.providers, {
@@ -357,7 +369,19 @@ export class AuctionAPI {
       if (this.providers.privateStateProvider && (this.providers.privateStateProvider as any).setContractAddress) {
         (this.providers.privateStateProvider as any).setContractAddress(contractAddress);
       }
-      const storedState = await this.providers.privateStateProvider.get(PRIVATE_STATE_ID);
+
+      let storedState: AuctionPrivateState | null = null;
+      try {
+        storedState = await this.providers.privateStateProvider.get(PRIVATE_STATE_ID);
+      } catch (e: any) {
+        // Ignore, handled below
+      }
+      if (!storedState) {
+        // Should not happen for seller, but fallback to be safe
+        storedState = { local_secret_key: this.witnesses.local_secret_key() };
+        await this.providers.privateStateProvider.set(PRIVATE_STATE_ID, storedState);
+      }
+
       const compiledContract = await buildCompiledContract(storedState);
 
       await (submitCallTxAsync as any)(this.providers, {
@@ -406,8 +430,12 @@ export class AuctionAPI {
         );
       }
 
-      // Decode the raw ledger state into our TypeScript AuctionState type
-      return decodeAuctionState(states.contractState.data);
+      // Decode the raw ledger bytes using the generated `ledger` function
+      const mod = await loadCompiledContractModule();
+      const decodedData = mod.ledger(states.contractState.data);
+
+      // Map the decoded ledger object into our TypeScript AuctionState type
+      return decodeAuctionState(decodedData);
     } catch (error) {
       if (error instanceof AuctionApiError) throw error;
       throw new AuctionApiError(

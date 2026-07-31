@@ -15,7 +15,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { contractAddress, itemDescription } = await request.json();
+    const { contractAddress, itemDescription, deployerAddress, deployTxHash } = await request.json();
 
     if (!contractAddress || !itemDescription) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -25,6 +25,8 @@ export async function POST(request: Request) {
       data: {
         contractAddress,
         itemDescription,
+        deployerAddress: deployerAddress ?? null,
+        deployTxHash:    deployTxHash    ?? null,
       },
     });
 
