@@ -324,7 +324,7 @@ function AuctionPage() {
       <Navbar wallet={wallet} />
 
       {/* ── Main content ─────────────────────────────────────────────── */}
-      <main className="flex-1 w-full max-w-[1200px] mx-auto px-4 py-8 md:px-6 md:py-12">
+      <main className="flex-1 w-full px-4 py-8 md:px-6 md:py-12" style={{ maxWidth: 1200, margin: '0 auto' }}>
 
         <section style={{ textAlign: 'center', marginBottom: 40, marginTop: 20 }}>
           {wallet.isConnected ? (
@@ -373,7 +373,8 @@ function AuctionPage() {
 
         {/* Stats bar */}
         <section
-          className="fade-up stagger-4 grid grid-cols-1 md:grid-cols-3 gap-4 mb-14"
+          className="fade-up stagger-4 mb-14"
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}
           aria-label="Protocol statistics"
         >
           <div className="stat-card">
@@ -395,7 +396,7 @@ function AuctionPage() {
 
         {/* Auction lookup bar */}
         <section id="auctions" className="mb-10" aria-label="Load auction by address">
-          <div className="flex flex-col sm:flex-row gap-2 max-w-[680px] w-full">
+          <div className="flex flex-col sm:flex-row gap-2 w-full" style={{ maxWidth: 680 }}>
             <input
               id="auction-address-input"
               className="input input-mono"
@@ -417,7 +418,7 @@ function AuctionPage() {
 
         {/* Auctions grid */}
         <section aria-label="Active auctions" className="mb-20">
-          <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-5">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '20px' }}>
             {auctions.map(({ address, state, itemDescription, deployerAddress }) => {
               // isSeller: compare stored deployer wallet address with current wallet address
               // Also fallback to localStorage for older auctions created before the DB change

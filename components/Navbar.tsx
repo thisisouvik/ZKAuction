@@ -26,7 +26,7 @@ export function Navbar({ wallet }: NavbarProps) {
         background: 'rgba(8,10,18,0.85)',
       }}
     >
-      <div className="max-w-[1200px] mx-auto px-4 md:px-6 flex items-center justify-between h-16">
+      <div className="px-4 md:px-6 h-16" style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {/* ZKAuction logo from /public/logo.png */}
