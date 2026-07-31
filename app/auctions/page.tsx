@@ -324,7 +324,7 @@ function AuctionPage() {
       <Navbar wallet={wallet} />
 
       {/* ── Main content ─────────────────────────────────────────────── */}
-      <main style={{ flex: 1, maxWidth: 1200, margin: '0 auto', width: '100%', padding: '48px 24px' }}>
+      <main className="flex-1 w-full max-w-[1200px] mx-auto px-4 py-8 md:px-6 md:py-12">
 
         <section style={{ textAlign: 'center', marginBottom: 40, marginTop: 20 }}>
           {wallet.isConnected ? (
@@ -373,8 +373,7 @@ function AuctionPage() {
 
         {/* Stats bar */}
         <section
-          className="fade-up stagger-4"
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 56 }}
+          className="fade-up stagger-4 grid grid-cols-1 md:grid-cols-3 gap-4 mb-14"
           aria-label="Protocol statistics"
         >
           <div className="stat-card">
@@ -395,8 +394,8 @@ function AuctionPage() {
         </section>
 
         {/* Auction lookup bar */}
-        <section id="auctions" style={{ marginBottom: 40 }} aria-label="Load auction by address">
-          <div style={{ display: 'flex', gap: 10, maxWidth: 680 }}>
+        <section id="auctions" className="mb-10" aria-label="Load auction by address">
+          <div className="flex flex-col sm:flex-row gap-2 max-w-[680px] w-full">
             <input
               id="auction-address-input"
               className="input input-mono"
@@ -417,8 +416,8 @@ function AuctionPage() {
         </section>
 
         {/* Auctions grid */}
-        <section aria-label="Active auctions" style={{ marginBottom: 80 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 20 }}>
+        <section aria-label="Active auctions" className="mb-20">
+          <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-5">
             {auctions.map(({ address, state, itemDescription, deployerAddress }) => {
               // isSeller: compare stored deployer wallet address with current wallet address
               // Also fallback to localStorage for older auctions created before the DB change

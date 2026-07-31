@@ -26,17 +26,7 @@ export function Navbar({ wallet }: NavbarProps) {
         background: 'rgba(8,10,18,0.85)',
       }}
     >
-      <div
-        style={{
-          maxWidth: 1200,
-          margin: '0 auto',
-          padding: '0 24px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          height: 64,
-        }}
-      >
+      <div className="max-w-[1200px] mx-auto px-4 md:px-6 flex items-center justify-between h-16">
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {/* ZKAuction logo from /public/logo.png */}
@@ -95,7 +85,7 @@ export function Navbar({ wallet }: NavbarProps) {
 
         <nav
           aria-label="Main navigation"
-          style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          className="hidden md:flex items-center gap-1"
         >
           <NavLink href="/">Home</NavLink>
           <NavLink href="/auctions">Auctions</NavLink>

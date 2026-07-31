@@ -176,7 +176,7 @@ export function AuctionCard({
         <p style={{ fontSize: 11, color: 'var(--purple-400)', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>
           🔒 Privacy Model
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <PrivacyRow icon="👁" label="Visible" value="Highest bid amount" />
           <PrivacyRow icon="🔒" label="Hidden" value="Reserve price" />
           <PrivacyRow icon="👁" label="Visible" value="ZK-derived bidder key" />
