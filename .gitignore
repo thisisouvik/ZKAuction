@@ -43,10 +43,7 @@ next-env.d.ts
 
 # ─── Midnight-specific ────────────────────────────────────────────
 # Compact compiler output (auto-generated, do not commit)
-contract/src/generated/index.cjs
-contract/src/generated/index.d.ts
-contract/src/generated/*.zkir
-contract/src/generated/*.mjs
+# (Actually, we need to commit these for Vercel deployment unless we compile on Vercel)
 
 # Private state database (local only, contains private keys)
 midnight-private-state.db
@@ -70,7 +67,7 @@ scripts/deploy-output.json
 skills-lock.json
 
 # Compiler / Public Assets
-contract/src/generated/
-public/keys/
-public/zkir/
-stubs/
+# contract/src/generated/
+# public/keys/
+# public/zkir/
+# stubs/
