@@ -16,7 +16,7 @@
 ## 🔗 Links
 
 - **Live Deployed App**: [https://zk-auction-dun.vercel.app/](https://zk-auction-dun.vercel.app/)
-- **Demo Video**: [Link here - Add later]
+- **Demo Video**: [https://youtu.be/SgigJdq82VI](https://youtu.be/SgigJdq82VI)
 
 ---
 
