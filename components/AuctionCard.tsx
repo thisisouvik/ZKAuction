@@ -212,7 +212,7 @@ export function AuctionCard({
           </button>
         )}
 
-        {isExpired && onWithdraw && (
+        {isExpired && onWithdraw && state.highest_bid > 0n && (
           <button
             id={`withdraw-btn-${contractAddress.slice(0, 8)}`}
             className="btn btn-danger"
