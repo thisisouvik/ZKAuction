@@ -4,6 +4,8 @@
   # ZKAuction
   ### Private Reserve Auctions on the Midnight Network
   
+  [![ZKAuction CI](https://github.com/thisisouvik/ZKAuction/actions/workflows/ci.yml/badge.svg)](https://github.com/thisisouvik/ZKAuction/actions/workflows/ci.yml)
+  
   ![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js&logoColor=white)
   ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
   ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)
@@ -16,6 +18,7 @@
 ## 🔗 Links
 
 - **Live Deployed App**: [https://zk-auction-dun.vercel.app/](https://zk-auction-dun.vercel.app/)
+- **Deployed Preprod Contract**: `b41e9f3039d8783040b27a6da5353a72c42f863b1878bad594af6e1fc76e5352` ([View on Explorer](https://explorer.1am.xyz/contract/b41e9f3039d8783040b27a6da5353a72c42f863b1878bad594af6e1fc76e5352))
 - **Demo Video**: [https://youtu.be/SgigJdq82VI](https://youtu.be/SgigJdq82VI)
 
 ---
